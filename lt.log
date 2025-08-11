@@ -1,0 +1,23 @@
+nohup: ignoring input
+Usage: lt --port [num] <options>
+
+Options:
+  -p, --port                Internal HTTP server port                 [required]
+  -h, --host                Upstream server providing forwarding
+                                             [default: "https://localtunnel.me"]
+  -s, --subdomain           Request this subdomain
+  -l, --local-host          Tunnel traffic to this host instead of localhost,
+                            override Host header to this host
+      --local-https         Tunnel traffic to a local HTTPS server     [boolean]
+      --local-cert          Path to certificate PEM file for local HTTPS server
+      --local-key           Path to certificate key file for local HTTPS server
+      --local-ca            Path to certificate authority file for self-signed
+                            certificates
+      --allow-invalid-cert  Disable certificate checks for your local HTTPS
+                            server (ignore cert/key/ca options)        [boolean]
+  -o, --open                Opens the tunnel URL in your browser
+      --print-requests      Print basic request info                   [boolean]
+      --help                Show this help and exit                    [boolean]
+      --version             Show version number                        [boolean]
+
+Invalid argument: `port` must be a number
