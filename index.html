@@ -30,12 +30,11 @@
     .pill{ padding:6px 8px; border-radius:999px; background:#12162b; border:1px solid #222642; color:#b7bfdc; font-size:12px }
     .row{ display:grid; grid-template-columns:1fr auto; gap:10px; align-items:center }
   </style>
-  <script defer src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
 </head>
 <body>
   <header>
     <h1>Engine Cycle Simulator (0‑D) — Valve Timing & Lift</h1>
-    <p>Run the in-browser Python simulator. Adjust valve timing and lift, then simulate and see cylinder pressure over 720°.</p>
+    <p>Adjust valve timing and lift, then simulate and see cylinder pressure over 720°.</p>
   </header>
   <div class="wrap">
     <section class="card controls">
@@ -98,12 +97,13 @@
       <svg id="plot" viewBox="0 0 1200 420" role="img" aria-label="Pressure vs crank angle"></svg>
       <div style="display:flex;justify-content:space-between;margin-top:8px">
         <span class="pill">p [bar] vs crank angle [deg]</span>
-        <span class="pill">Runs in-browser via Pyodide • No server</span>
+        <span class="pill">Pure JavaScript • Mobile-friendly</span>
       </div>
     </section>
   </div>
 
   <script>
+    // UI elements
     const plot = document.getElementById('plot');
     const rpm = document.getElementById('rpm');
     const phi = document.getElementById('phi');
@@ -136,17 +136,16 @@
       iliftVal.textContent = (+ilift.value).toFixed(1);
       eliftVal.textContent = (+elift.value).toFixed(1);
     }
-
     [rpm,phi,ivo,ivc,evo,evc,ilift,elift].forEach(el=>el.addEventListener('input', syncLabels));
     document.getElementById('resetBtn').addEventListener('click', ()=>{
       rpm.value=3000; phi.value=1.0; ivo.value=710; ivc.value=220; evo.value=480; evc.value=10; ilift.value=10; elift.value=9; syncLabels();
     });
-
     syncLabels();
 
+    // Plot helpers
     function clearSVG(){ while (plot.firstChild) plot.removeChild(plot.firstChild); }
-    function line(x1,y1,x2,y2, cls){ const el = document.createElementNS('http://www.w3.org/2000/svg','line'); el.setAttribute('x1',x1); el.setAttribute('y1',y1); el.setAttribute('x2',x2); el.setAttribute('y2',y2); el.setAttribute('class',cls||'grid'); el.setAttribute('stroke','#2a2f4a'); el.setAttribute('stroke-width','1'); plot.appendChild(el); return el; }
-    function path(d, cls){ const el = document.createElementNS('http://www.w3.org/2000/svg','path'); el.setAttribute('d',d); el.setAttribute('class',cls||'curve'); el.setAttribute('stroke','#6ea8ff'); el.setAttribute('fill','none'); el.setAttribute('stroke-width','2'); plot.appendChild(el); return el; }
+    function line(x1,y1,x2,y2){ const el = document.createElementNS('http://www.w3.org/2000/svg','line'); el.setAttribute('x1',x1); el.setAttribute('y1',y1); el.setAttribute('x2',x2); el.setAttribute('y2',y2); el.setAttribute('stroke','#2a2f4a'); el.setAttribute('stroke-width','1'); plot.appendChild(el); return el; }
+    function path(d){ const el = document.createElementNS('http://www.w3.org/2000/svg','path'); el.setAttribute('d',d); el.setAttribute('stroke','#6ea8ff'); el.setAttribute('fill','none'); el.setAttribute('stroke-width','2'); plot.appendChild(el); return el; }
     function text(x,y,str){ const el = document.createElementNS('http://www.w3.org/2000/svg','text'); el.setAttribute('x',x); el.setAttribute('y',y); el.setAttribute('fill','#8f97c6'); el.setAttribute('font-size','12'); el.textContent=str; plot.appendChild(el); return el; }
 
     function drawGrid(){
@@ -160,466 +159,190 @@
       for(let i=0;i<theta.length;i++){
         const x=(theta[i]/720)*W; const y=H-(pbar[i]/100)*H; d += (i? ' L':'M')+x.toFixed(2)+','+y.toFixed(2);
       }
-      path(d, 'curve');
+      path(d);
     }
-  </script>
 
-  <script>
-    let pyodideReadyPromise = loadPyodide({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.25.0/full/' });
-
-    async function runSim(){
-      const pyodide = await pyodideReadyPromise;
-      // Write engine_sim package files into the in-memory FS
-      const files = {
-        'engine_sim/__init__.py': '',
-        'engine_sim/geometry.py': `"""
-from __future__ import annotations
-
-import math
-from dataclasses import dataclass
-
-
-DEG_TO_RAD = math.pi / 180.0
-
-
-@dataclass
-class EngineGeometry:
-    """
-    Engine geometric parameters and kinematics helpers.
-    - bore: Cylinder bore [m]
-    - stroke: Piston stroke [m]
-    - connecting_rod_length: Connecting rod length [m]
-    - compression_ratio: Dimensionless compression ratio (Vmax / Vmin)
-    """
-
-    bore: float
-    stroke: float
-    connecting_rod_length: float
-    compression_ratio: float
-
-    def __post_init__(self) -> None:
-        self.piston_area = math.pi * (self.bore ** 2) / 4.0
-        self.crank_radius = self.stroke / 2.0
-        self.rod_length = self.connecting_rod_length
-        self.swept_volume = self.piston_area * self.stroke
-        # V_clearance is the minimum volume at TDC
-        self.clearance_volume = self.swept_volume / (self.compression_ratio - 1.0)
-
-    def piston_displacement_from_tdc(self, theta_deg: float) -> float:
-        """
-        Returns piston displacement from TDC along cylinder axis [m] as a function of crank angle theta [deg].
-        theta=0 deg corresponds to TDC between exhaust and intake (start of intake stroke).
-        """
-        theta = theta_deg * DEG_TO_RAD
-        r = self.crank_radius
-        l = self.rod_length
-        # Slider-crank exact kinematics
-        term = max(0.0, l**2 - (r * math.sin(theta)) ** 2)
-        x = r * math.cos(theta) + math.sqrt(term)
-        x_tdc = r + l
-        s = x_tdc - x  # displacement from TDC
-        return s
-
-    def volume(self, theta_deg: float) -> float:
-        """Instantaneous cylinder volume [m^3] at crank angle theta [deg]."""
-        s = self.piston_displacement_from_tdc(theta_deg)
-        return self.clearance_volume + self.piston_area * s
-
-    def volume_and_dVdtheta(self, theta_deg: float, dtheta_deg: float = 0.1) -> tuple[float, float]:
-        """
-        Returns (V, dV/dtheta) where V is volume [m^3], and dV/dtheta is derivative w.r.t. crank angle [m^3/deg].
-        Uses a small centered finite difference for dV/dtheta.
-        """
-        v = self.volume(theta_deg)
-        v_plus = self.volume(theta_deg + dtheta_deg)
-        v_minus = self.volume(theta_deg - dtheta_deg)
-        dv_dtheta = (v_plus - v_minus) / (2.0 * dtheta_deg)
-        return v, dv_dtheta
-
-    def wall_area_estimate(self, theta_deg: float) -> float:
-        """
-        Very simple estimate of instantaneous in-cylinder heat transfer area [m^2]:
-        piston crown area + liner area up to current piston position.
-        """
-        s = self.piston_displacement_from_tdc(theta_deg)
-        liner_area = math.pi * self.bore * max(s, 0.0)
-        return self.piston_area + liner_area
-""` ,
-        'engine_sim/valve.py': `"""
-from __future__ import annotations
-
-import math
-from dataclasses import dataclass
-from typing import Optional
-
-
-@dataclass
-class ValveProfile:
-    """
-    Defines a simple sinusoidal lift profile based on open and close angles.
-    All angles are in crank degrees in [0, 720).
-    - open_deg: opening angle [deg]
-    - close_deg: closing angle [deg]; may be less than open_deg to indicate wrap-around
-    - max_lift: maximum valve lift [m]
-    - valve_diameter: valve head diameter [m]
-    - num_valves: number of identical valves
-    - discharge_coefficient: dimensionless flow discharge coefficient (0.5-0.9 typical)
-    """
-
-    open_deg: float
-    close_deg: float
-    max_lift: float
-    valve_diameter: float
-    num_valves: int
-    discharge_coefficient: float = 0.7
-
-    def duration(self) -> float:
-        if self.close_deg >= self.open_deg:
-            return self.close_deg - self.open_deg
-        # wrap-around over 720 deg
-        return (720.0 - self.open_deg) + self.close_deg
-
-    def phase_fraction(self, theta_deg: float) -> Optional[float]:
-        """
-        Returns phase fraction f in [0,1] within the open duration if valve is open at theta_deg, else None.
-        Uses wrap-around logic over 720 deg cycle.
-        """
-        t = theta_deg % 720.0
-        if self.close_deg >= self.open_deg:
-            if t < self.open_deg or t > self.close_deg:
-                return None
-            return (t - self.open_deg) / max(self.duration(), 1e-9)
-        # wrap case
-        if t < self.open_deg and t > self.close_deg:
-            return None
-        if t >= self.open_deg:
-            return (t - self.open_deg) / max(self.duration(), 1e-9)
-        # t <= close_deg
-        return (t + (720.0 - self.open_deg)) / max(self.duration(), 1e-9)
-
-    def lift(self, theta_deg: float) -> float:
-        f = self.phase_fraction(theta_deg)
-        if f is None:
-            return 0.0
-        # Smooth sinusoidal cam-like lift
-        return self.max_lift * math.sin(math.pi * f)
-
-    def effective_flow_area(self, theta_deg: float) -> float:
-        """
-        Returns the effective geometric flow area [m^2] of the valve curtain times discharge coefficient.
-        Curtain area ~ circumference * lift per valve, times number of valves.
-        Caps area by valve curtain at max lift but does not model seat throttling separately.
-        """
-        current_lift = self.lift(theta_deg)
-        if current_lift <= 0.0:
-            return 0.0
-        circumference = math.pi * self.valve_diameter
-        geometric_area = circumference * current_lift * self.num_valves
-        return geometric_area * self.discharge_coefficient
-""` ,
-        'engine_sim/combustion.py': `"""
-from __future__ import annotations
-
-import math
-from dataclasses import dataclass
-from typing import Optional
-
-
-@dataclass
-class WiebeFunction:
-    """
-    Wiebe function parameters to describe mass fraction burned over crank angle.
-    xb(theta) = 1 - exp(-a * ((theta - theta0)/delta)^(m+1)) for theta within [theta0, theta0+delta].
-    """
-
-    start_deg: float
-    duration_deg: float
-    a: float = 5.0
-    m: float = 2.0
-
-    def mass_fraction_burned(self, theta_deg: float) -> float:
-        if theta_deg < self.start_deg:
-            return 0.0
-        if theta_deg > self.start_deg + self.duration_deg:
-            return 1.0
-        x = (theta_deg - self.start_deg) / max(self.duration_deg, 1e-9)
-        return 1.0 - math.exp(-self.a * (x ** (self.m + 1.0)))
-
-    def dxb_dtheta(self, theta_deg: float) -> float:
-        if theta_deg < self.start_deg or theta_deg > self.start_deg + self.duration_deg:
-            return 0.0
-        x = (theta_deg - self.start_deg) / max(self.duration_deg, 1e-9)
-        # derivative wrt theta (deg)
-        return (
-            self.a * (self.m + 1.0) / max(self.duration_deg, 1e-9)
-            * (x ** self.m)
-            * math.exp(-self.a * (x ** (self.m + 1.0)))
-        )
-""` ,
-        'engine_sim/simulator.py': `"""
-from __future__ import annotations
-
-import math
-from dataclasses import dataclass
-from typing import Dict, List, Tuple
-
-from .geometry import EngineGeometry
-from .valve import ValveProfile
-from .combustion import WiebeFunction
-
-
-R_AIR = 287.0  # J/(kg.K)
-GAMMA = 1.35   # specific heat ratio, approximate for hot air-fuel
-CP = GAMMA * R_AIR / (GAMMA - 1.0)
-CV = CP - R_AIR
-
-
-@dataclass
-class BoundaryConditions:
-    intake_pressure_pa: float
-    intake_temperature_k: float
-    exhaust_pressure_pa: float
-    exhaust_temperature_k: float
-    wall_temperature_k: float = 450.0
-
-
-@dataclass
-class EngineParams:
-    geometry: EngineGeometry
-    rpm: float
-    intake_valve: ValveProfile
-    exhaust_valve: ValveProfile
-    combustion: WiebeFunction
-    equivalence_ratio: float = 1.0  # phi
-    afr_stoich: float = 14.7        # air-fuel mass ratio stoichiometric
-    heat_transfer_coeff_w_m2k: float = 150.0
-    num_cycles: int = 1
-
-
-def critical_pressure_ratio(gamma: float) -> float:
-    return (2.0 / (gamma + 1.0)) ** (gamma / (gamma - 1.0))
-
-
-def is_choked(p_up: float, p_down: float, gamma: float) -> bool:
-    return (p_down / max(p_up, 1e-9)) <= critical_pressure_ratio(gamma)
-
-
-def orifice_mass_flow(area_m2: float, cd: float, p_up: float, t_up: float, p_down: float, gamma: float = GAMMA, r: float = R_AIR) -> float:
-    """
-    Compressible orifice mass flow [kg/s] from upstream to downstream.
-    Positive direction: from upstream to downstream.
-    """
-    if area_m2 <= 0.0 or p_up <= 1.0:
-        return 0.0
-
-    pr = max(p_down / max(p_up, 1e-9), 1e-9)
-    coef = cd * area_m2 * p_up * math.sqrt(gamma / (r * max(t_up, 1e-9)))
-    if pr <= critical_pressure_ratio(gamma):
-        # choked flow
-        return coef * ((2.0 / (gamma + 1.0)) ** ((gamma + 1.0) / (2.0 * (gamma - 1.0))))
-    # subsonic
-    return coef * (pr ** (1.0 / gamma)) * math.sqrt((2.0 * gamma / (gamma - 1.0)) * (1.0 - pr ** ((gamma - 1.0) / gamma)))
-
-
-def trapezoidal_integral(y_values: List[float], x_values: List[float]) -> float:
-    total = 0.0
-    for i in range(1, len(x_values)):
-        dx = x_values[i] - x_values[i - 1]
-        total += 0.5 * (y_values[i] + y_values[i - 1]) * dx
-    return total
-
-
-class EngineSimulator:
-    def __init__(self, params: EngineParams, boundaries: BoundaryConditions) -> None:
-        self.params = params
-        self.boundaries = boundaries
-        self.omega_deg_per_s = 6.0 * params.rpm  # deg/s (360 deg per rev, rpm/60 rev/s => 6*rpm deg/s)
-
-    def run(self, dtheta_deg: float = 0.5) -> Dict[str, List[float]]:
-        geometry = self.params.geometry
-        total_degrees = 720.0 * self.params.num_cycles
-
-        thetas: List[float] = []
-        volumes: List[float] = []
-        dv_dtheta: List[float] = []
-        pressures: List[float] = []
-        temperatures: List[float] = []
-        masses: List[float] = []
-        m_dot_cyl: List[float] = []
-        heat_release_rate: List[float] = []
-        q_loss_rate: List[float] = []
-        intake_area: List[float] = []
-        exhaust_area: List[float] = []
-
-        # Initial state at theta=0 (TDC between exhaust and intake).
-        V0, _ = geometry.volume_and_dVdtheta(0.0)
-        p0 = self.boundaries.intake_pressure_pa
-        T0 = self.boundaries.intake_temperature_k
-        m0 = max(p0 * V0 / (R_AIR * T0), 1e-6)
-
-        U = m0 * CV * T0
-        m = m0
-
-        # Precompute Q_total when combustion starts (based on trapped air at SOC)
-        q_total = None
-
-        theta = 0.0
-        while theta <= total_degrees + 1e-9:
-            V, dVdth = geometry.volume_and_dVdtheta(theta)
-            thetas.append(theta)
-            volumes.append(V)
-            dv_dtheta.append(dVdth)
-
-            # current p, T
-            T = max(U / max(m, 1e-9) / CV, 1.0)
-            p = max(m * R_AIR * T / max(V, 1e-12), 100.0)
-            pressures.append(p)
-            temperatures.append(T)
-            masses.append(m)
-
-            # Areas
-            Ai_eff = self.params.intake_valve.effective_flow_area(theta % 720.0)
-            Ae_eff = self.params.exhaust_valve.effective_flow_area(theta % 720.0)
-            intake_area.append(Ai_eff)
-            exhaust_area.append(Ae_eff)
-
-            # Mass flows into cylinder (positive into cylinder)
-            m_dot_in = 0.0
-            m_dot_out = 0.0
-
-            # Intake flow: from intake manifold to cylinder if p_intake > p_cyl; handle backflow
-            if Ai_eff > 0.0:
-                if self.boundaries.intake_pressure_pa >= p:
-                    md = orifice_mass_flow(Ai_eff, 1.0,
-                                           self.boundaries.intake_pressure_pa, self.boundaries.intake_temperature_k,
-                                           p, GAMMA)
-                    m_dot_in += md
-                else:
-                    # backflow to intake
-                    md = orifice_mass_flow(Ai_eff, 1.0,
-                                           p, T, self.boundaries.intake_pressure_pa, GAMMA)
-                    m_dot_out += md
-
-            # Exhaust flow: from cylinder to exhaust if p_cyl > p_exh; handle backflow
-            if Ae_eff > 0.0:
-                if p >= self.boundaries.exhaust_pressure_pa:
-                    md = orifice_mass_flow(Ae_eff, 1.0,
-                                           p, T, self.boundaries.exhaust_pressure_pa, GAMMA)
-                    m_dot_out += md
-                else:
-                    md = orifice_mass_flow(Ae_eff, 1.0,
-                                           self.boundaries.exhaust_pressure_pa, self.boundaries.exhaust_temperature_k,
-                                           p, GAMMA)
-                    m_dot_in += md
-
-            m_dot_net = m_dot_in - m_dot_out
-            m_dot_cyl.append(m_dot_net)
-
-            # Heat release from combustion (Wiebe)
-            theta_mod = theta % 720.0
-            dxb_dtheta = self.params.combustion.dxb_dtheta(theta_mod)
-            if q_total is None and theta_mod >= self.params.combustion.start_deg:
-                # determine energy of fuel based on trapped air mass at SOC
-                m_air = m
-                m_fuel = (m_air / self.params.afr_stoich) * self.params.equivalence_ratio
-                LHV = 44e6  # J/kg, gasoline-like
-                q_total = m_fuel * LHV
-            qdot_comb = 0.0 if q_total is None else (dxb_dtheta * q_total * self.omega_deg_per_s)
-            heat_release_rate.append(qdot_comb)
-
-            # Heat loss to walls (very simple model)
-            Aw = geometry.wall_area_estimate(theta_mod)
-            h = self.params.heat_transfer_coeff_w_m2k
-            qdot_loss = h * Aw * max(T - self.boundaries.wall_temperature_k, 0.0)
-            q_loss_rate.append(qdot_loss)
-
-            # Enthalpy transport
-            h_in = CP * self.boundaries.intake_temperature_k
-            h_exh = CP * T  # assume outflow enthalpy at cylinder temperature
-
-            # Work term p dV/dt
-            dVdt = dVdth * self.omega_deg_per_s
-            pdotV = p * dVdt
-
-            # Integrate over dt
-            dt = dtheta_deg / self.omega_deg_per_s
-            dU = (qdot_comb - qdot_loss - pdotV + h_in * m_dot_in - h_exh * m_dot_out) * dt
-            U = max(U + dU, 1.0)
-            m = max(m + m_dot_net * dt, 1e-7)
-
-            theta += dtheta_deg
-
-        # Compute P-V work and IMEP
-        work = trapezoidal_integral(pressures, volumes)
-        displacement = self.params.geometry.swept_volume
-        imep = work / displacement if displacement > 0 else 0.0
-
-        return {
-            "theta_deg": thetas,
-            "volume_m3": volumes,
-            "pressure_pa": pressures,
-            "temperature_k": temperatures,
-            "mass_kg": masses,
-            "m_dot_kg_s": m_dot_cyl,
-            "qdot_comb_w": heat_release_rate,
-            "qdot_loss_w": q_loss_rate,
-            "intake_area_m2": intake_area,
-            "exhaust_area_m2": exhaust_area,
-            "imep_pa": [imep],
-            "work_j": [work],
+    // Physics constants
+    const R_AIR = 287.0;
+    const GAMMA = 1.35;
+    const CP = GAMMA * R_AIR / (GAMMA - 1.0);
+    const CV = CP - R_AIR;
+    const DEG_TO_RAD = Math.PI / 180;
+
+    // Engine geometry
+    function makeGeometry(bore, stroke, rod, cr){
+      const pistonArea = Math.PI * (bore*bore) / 4;
+      const crankRadius = stroke/2;
+      const clearanceV = (pistonArea*stroke) / (cr - 1.0);
+      return {
+        bore, stroke, rod, cr, pistonArea, crankRadius, clearanceV,
+        pistonDispFromTdc(thetaDeg){
+          const theta = thetaDeg * DEG_TO_RAD;
+          const r = crankRadius, l = rod;
+          const term = Math.max(0, l*l - (r * Math.sin(theta))**2);
+          const x = r * Math.cos(theta) + Math.sqrt(term);
+          const x_tdc = r + l;
+          return x_tdc - x;
+        },
+        volume(thetaDeg){
+          const s = this.pistonDispFromTdc(thetaDeg);
+          return clearanceV + pistonArea * s;
+        },
+        volumeAnddVdtheta(thetaDeg){
+          const h = 0.1;
+          const v = this.volume(thetaDeg);
+          const vPlus = this.volume(thetaDeg + h);
+          const vMinus = this.volume(thetaDeg - h);
+          const dVdtheta = (vPlus - vMinus) / (2*h);
+          return [v, dVdtheta];
+        },
+        wallAreaEstimate(thetaDeg){
+          const s = this.pistonDispFromTdc(thetaDeg);
+          const linerArea = Math.PI * bore * Math.max(s, 0);
+          return pistonArea + linerArea;
         }
-""` ,
       };
-      for (const [path, content] of Object.entries(files)){
-        const parts = path.split('/'); let cur='';
-        for (let i=0;i<parts.length-1;i++){ cur += (i?'/':'')+parts[i]; if (!pyodide.FS.analyzePath(cur).exists) pyodide.FS.mkdir(cur); }
-        pyodide.FS.writeFile(path, content.replace(/^"""\n/,'').replace(/\n""`\s*,$/,'').replace(/\r/g,''), { encoding:'utf8' });
+    }
+
+    // Valve profile
+    function makeValve(openDeg, closeDeg, maxLift, valveDiameter, numValves, Cd){
+      function duration(){ return closeDeg >= openDeg ? (closeDeg - openDeg) : (720 - openDeg + closeDeg); }
+      function phaseFraction(thetaDeg){
+        const t = ((thetaDeg % 720) + 720) % 720;
+        if (closeDeg >= openDeg){
+          if (t < openDeg || t > closeDeg) return null;
+          return (t - openDeg) / Math.max(duration(), 1e-9);
+        }
+        if (t < openDeg && t > closeDeg) return null;
+        if (t >= openDeg) return (t - openDeg) / Math.max(duration(), 1e-9);
+        return (t + (720 - openDeg)) / Math.max(duration(), 1e-9);
+      }
+      function lift(thetaDeg){
+        const f = phaseFraction(thetaDeg);
+        return f==null ? 0 : maxLift * Math.sin(Math.PI * f);
+      }
+      function effectiveArea(thetaDeg){
+        const L = lift(thetaDeg);
+        if (L <= 0) return 0;
+        const circumference = Math.PI * valveDiameter;
+        const geometric = circumference * L * numValves;
+        return geometric * Cd; // Cd applied here only
+      }
+      return { duration, phaseFraction, lift, effectiveArea, Cd };
+    }
+
+    // Flow
+    function criticalPressureRatio(gamma){ return Math.pow(2/(gamma+1), gamma/(gamma-1)); }
+    function orificeMassFlow(area, cd, p_up, t_up, p_down, gamma=GAMMA, R=R_AIR){
+      if (area<=0 || p_up<=1) return 0;
+      const pr = Math.max(p_down/Math.max(p_up,1e-9), 1e-9);
+      const coef = cd * area * p_up * Math.sqrt(gamma/(R*Math.max(t_up,1e-9)));
+      if (pr <= criticalPressureRatio(gamma)){
+        return coef * Math.pow(2/(gamma+1), (gamma+1)/(2*(gamma-1)));
+      }
+      return coef * Math.pow(pr, 1/gamma) * Math.sqrt((2*gamma/(gamma-1))*(1 - Math.pow(pr, (gamma-1)/gamma)));
+    }
+
+    function trapz(y,x){ let s=0; for(let i=1;i<x.length;i++){ const dx=x[i]-x[i-1]; s += 0.5*(y[i]+y[i-1])*dx; } return s; }
+
+    function runEngine({rpm, phi, ivo, ivc, evo, evc, ilift, elift}){
+      const geom = makeGeometry(0.086,0.086,0.143,10.5);
+      const intake = makeValve(ivo, ivc, ilift, 0.034, 2, 0.7);
+      const exhaust = makeValve(evo, evc, elift, 0.029, 2, 0.7);
+      const wiebe = { startDeg: 355.0, durationDeg: 40.0, a:6.0, m:2.0,
+        dxb_dtheta(theta){
+          if (theta<this.startDeg || theta>this.startDeg+this.durationDeg) return 0;
+          const x = (theta - this.startDeg) / Math.max(this.durationDeg, 1e-9);
+          return this.a*(this.m+1)/Math.max(this.durationDeg,1e-9) * Math.pow(x, this.m) * Math.exp(-this.a*Math.pow(x, this.m+1));
+        }
+      };
+
+      const omegaDegPerS = 6.0 * rpm;
+      const totalDeg = 720*2;
+      const dtheta = 1.0;
+
+      const thetaArr=[], volArr=[], pArr=[], TArr=[];
+      let mArr=[], mdotArr=[];
+
+      const p_intake = 1.0e5, T_intake=300;
+      const p_exh = 1.1e5, T_exh=700, T_wall=420;
+
+      const V0 = geom.volume(0);
+      let p= p_intake, T=T_intake;
+      let m = Math.max(p*V0/(R_AIR*T), 1e-6);
+      let U = m*CV*T;
+      let q_total = null;
+
+      for(let theta=0; theta<=totalDeg+1e-9; theta+=dtheta){
+        const [V, dVdth] = geom.volumeAnddVdtheta(theta);
+        T = Math.max(U/Math.max(m,1e-9)/CV, 1);
+        p = Math.max(m*R_AIR*T/Math.max(V,1e-12), 100);
+
+        thetaArr.push(theta); volArr.push(V); pArr.push(p); TArr.push(T); mArr.push(m);
+
+        const Ai = intake.effectiveArea(theta%720);
+        const Ae = exhaust.effectiveArea(theta%720);
+
+        let m_in=0, m_out=0;
+        if (Ai>0){
+          if (p_intake>=p){ m_in += orificeMassFlow(Ai,1.0,p_intake,T_intake,p); }
+          else{ m_out += orificeMassFlow(Ai,1.0,p,T,p_intake); }
+        }
+        if (Ae>0){
+          if (p>=p_exh){ m_out += orificeMassFlow(Ae,1.0,p,T,p_exh); }
+          else{ m_in += orificeMassFlow(Ae,1.0,p_exh,T_exh,p); }
+        }
+        const m_dot = m_in - m_out;
+        mdotArr.push(m_dot);
+
+        const theta_mod = theta % 720;
+        const dxb = wiebe.dxb_dtheta(theta_mod);
+        if (q_total===null && theta_mod>=wiebe.startDeg){
+          const m_air = m;
+          const m_fuel = (m_air/14.7)*phi;
+          const LHV = 44e6;
+          q_total = m_fuel * LHV;
+        }
+        const qdot_comb = q_total===null ? 0 : dxb * q_total * omegaDegPerS;
+        const Aw = geom.wallAreaEstimate(theta_mod);
+        const h = 150.0;
+        const qdot_loss = h * Aw * Math.max(T - T_wall, 0);
+
+        const h_in = CP * T_intake;
+        const h_exh = CP * T;
+        const dVdt = dVdth * omegaDegPerS;
+        const pdotV = p * dVdt;
+        const dt = dtheta / omegaDegPerS;
+
+        const dU = (qdot_comb - qdot_loss - pdotV + h_in*m_in - h_exh*m_out) * dt;
+        U = Math.max(U + dU, 1);
+        m = Math.max(m + m_dot*dt, 1e-7);
       }
 
-      const rpmVal = Number(document.getElementById('rpm').value);
-      const phiVal = Number(document.getElementById('phi').value);
-      const ivoVal = Number(document.getElementById('ivo').value);
-      const ivcVal = Number(document.getElementById('ivc').value);
-      const evoVal = Number(document.getElementById('evo').value);
-      const evcVal = Number(document.getElementById('evc').value);
-      const iliftVal = Number(document.getElementById('ilift').value)/1000.0;
-      const eliftVal = Number(document.getElementById('elift').value)/1000.0;
+      const work = trapz(pArr, volArr);
+      const swept = Math.PI*(0.086*0.086)/4 * 0.086;
+      const imep = work / swept;
+      return { theta: thetaArr, pbar: pArr.map(px=>px/1e5), imepBar: imep/1e5, work };
+    }
 
-      const code = `
-from engine_sim.geometry import EngineGeometry
-from engine_sim.valve import ValveProfile
-from engine_sim.combustion import WiebeFunction
-from engine_sim.simulator import BoundaryConditions, EngineParams, EngineSimulator
-
-geom = EngineGeometry(bore=0.086, stroke=0.086, connecting_rod_length=0.143, compression_ratio=10.5)
-intake = ValveProfile(open_deg=${'${ivoVal}'}, close_deg=${'${ivcVal}'}, max_lift=${'${iliftVal}'}, valve_diameter=0.034, num_valves=2, discharge_coefficient=0.7)
-exhaust = ValveProfile(open_deg=${'${evoVal}'}, close_deg=${'${evcVal}'}, max_lift=${'${eliftVal}'}, valve_diameter=0.029, num_valves=2, discharge_coefficient=0.7)
-wiebe = WiebeFunction(start_deg=355.0, duration_deg=40.0, a=6.0, m=2.0)
-params = EngineParams(geometry=geom, rpm=${'${rpmVal}'}, intake_valve=intake, exhaust_valve=exhaust, combustion=wiebe, equivalence_ratio=${'${phiVal}'}, afr_stoich=14.7, heat_transfer_coeff_w_m2k=150.0, num_cycles=2)
-bc = BoundaryConditions(intake_pressure_pa=1.0e5, intake_temperature_k=300.0, exhaust_pressure_pa=1.1e5, exhaust_temperature_k=700.0, wall_temperature_k=420.0)
-sim = EngineSimulator(params, bc)
-res = sim.run(dtheta_deg=1.0)
-# Extract arrays
-out = {
-  'theta_deg': res['theta_deg'],
-  'pressure_bar': [p/1e5 for p in res['pressure_pa']],
-  'imep_bar': res['imep_pa'][0]/1e5,
-  'work_j': res['work_j'][0],
-}
-`;
-      await pyodide.runPythonAsync(code);
-      const out = pyodide.globals.get('out').toJs({ dict:true });
+    function runSim(){
+      const result = runEngine({
+        rpm: +rpm.value,
+        phi: +phi.value,
+        ivo: +ivo.value,
+        ivc: +ivc.value,
+        evo: +evo.value,
+        evc: +evc.value,
+        ilift: +ilift.value/1000,
+        elift: +elift.value/1000,
+      });
       drawGrid();
-      drawCurve(out.theta_deg, out.pressure_bar);
-      imepOut.textContent = out.imep_bar.toFixed(1);
-      workOut.textContent = out.work_j.toFixed(2);
+      drawCurve(result.theta, result.pbar);
+      imepOut.textContent = result.imepBar.toFixed(1);
+      workOut.textContent = result.work.toFixed(2);
     }
 
     document.getElementById('runBtn').addEventListener('click', runSim);
-  </script>
-
-  <script>
-    // Inline file contents from project at build time (simple replace tokens)
   </script>
 </body>
 </html>
