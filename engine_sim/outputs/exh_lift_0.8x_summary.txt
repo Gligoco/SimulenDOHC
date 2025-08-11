@@ -1,0 +1,2 @@
+IMEP [Pa]: 280687
+Work per cycle [J]: 140.22

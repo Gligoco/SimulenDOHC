@@ -20,8 +20,8 @@ def make_baseline_engine() -> tuple[EngineParams, BoundaryConditions]:
     # Angles are absolute in 0..720 deg, 0 at TDC between exhaust-intake, increasing with rotation
     # Typical cam: IVO ~ 350 deg (10 deg BTDC), IVC ~ 580 deg (40 deg ABDC)
     intake = ValveProfile(
-        open_deg=350.0,
-        close_deg=580.0,
+        open_deg=710.0,          # 10° BTDC of overlap TDC (wrap-around)
+        close_deg=220.0,         # 40° ABDC of intake
         max_lift=0.010,          # 10 mm
         valve_diameter=0.034,    # 34 mm
         num_valves=2,
@@ -39,8 +39,8 @@ def make_baseline_engine() -> tuple[EngineParams, BoundaryConditions]:
     )
 
     wiebe = WiebeFunction(
-        start_deg=700.0,       # 20 deg BTDC compression to TDC=720
-        duration_deg=60.0,     # fast burn
+        start_deg=355.0,       # near TDC of compression (360°)
+        duration_deg=40.0,     # fast burn around TDC
         a=6.0,
         m=2.0,
     )
@@ -168,6 +168,56 @@ def main() -> None:
             num_cycles=p.num_cycles,
         )
         label = f"int_lift_{lift_factor:.1f}x"
+        scenarios[label] = run_and_save(params2, bc, outdir, label)
+
+    # Exhaust duration sweep (vary closing angle)
+    for d_add in [ -20.0, 0.0, 20.0, 40.0 ]:
+        p = baseline_params
+        new_exhaust = ValveProfile(
+            open_deg=p.exhaust_valve.open_deg,
+            close_deg=(p.exhaust_valve.close_deg + d_add) % 720.0,
+            max_lift=p.exhaust_valve.max_lift,
+            valve_diameter=p.exhaust_valve.valve_diameter,
+            num_valves=p.exhaust_valve.num_valves,
+            discharge_coefficient=p.exhaust_valve.discharge_coefficient,
+        )
+        params2 = EngineParams(
+            geometry=p.geometry,
+            rpm=p.rpm,
+            intake_valve=p.intake_valve,
+            exhaust_valve=new_exhaust,
+            combustion=p.combustion,
+            equivalence_ratio=p.equivalence_ratio,
+            afr_stoich=p.afr_stoich,
+            heat_transfer_coeff_w_m2k=p.heat_transfer_coeff_w_m2k,
+            num_cycles=p.num_cycles,
+        )
+        label = f"exh_dur_{int(new_exhaust.duration())}deg"
+        scenarios[label] = run_and_save(params2, bc, outdir, label)
+
+    # Exhaust lift sweep
+    for lift_factor in [0.8, 1.0, 1.2]:
+        p = baseline_params
+        new_exhaust = ValveProfile(
+            open_deg=p.exhaust_valve.open_deg,
+            close_deg=p.exhaust_valve.close_deg,
+            max_lift=p.exhaust_valve.max_lift * lift_factor,
+            valve_diameter=p.exhaust_valve.valve_diameter,
+            num_valves=p.exhaust_valve.num_valves,
+            discharge_coefficient=p.exhaust_valve.discharge_coefficient,
+        )
+        params2 = EngineParams(
+            geometry=p.geometry,
+            rpm=p.rpm,
+            intake_valve=p.intake_valve,
+            exhaust_valve=new_exhaust,
+            combustion=p.combustion,
+            equivalence_ratio=p.equivalence_ratio,
+            afr_stoich=p.afr_stoich,
+            heat_transfer_coeff_w_m2k=p.heat_transfer_coeff_w_m2k,
+            num_cycles=p.num_cycles,
+        )
+        label = f"exh_lift_{lift_factor:.1f}x"
         scenarios[label] = run_and_save(params2, bc, outdir, label)
 
 

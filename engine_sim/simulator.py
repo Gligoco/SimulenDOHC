@@ -131,24 +131,24 @@ class EngineSimulator:
             # Intake flow: from intake manifold to cylinder if p_intake > p_cyl; handle backflow
             if Ai_eff > 0.0:
                 if self.boundaries.intake_pressure_pa >= p:
-                    md = orifice_mass_flow(Ai_eff, self.params.intake_valve.discharge_coefficient,
+                    md = orifice_mass_flow(Ai_eff, 1.0,
                                            self.boundaries.intake_pressure_pa, self.boundaries.intake_temperature_k,
                                            p, GAMMA)
                     m_dot_in += md
                 else:
                     # backflow to intake
-                    md = orifice_mass_flow(Ai_eff, self.params.intake_valve.discharge_coefficient,
+                    md = orifice_mass_flow(Ai_eff, 1.0,
                                            p, T, self.boundaries.intake_pressure_pa, GAMMA)
                     m_dot_out += md
 
             # Exhaust flow: from cylinder to exhaust if p_cyl > p_exh; handle backflow
             if Ae_eff > 0.0:
                 if p >= self.boundaries.exhaust_pressure_pa:
-                    md = orifice_mass_flow(Ae_eff, self.params.exhaust_valve.discharge_coefficient,
+                    md = orifice_mass_flow(Ae_eff, 1.0,
                                            p, T, self.boundaries.exhaust_pressure_pa, GAMMA)
                     m_dot_out += md
                 else:
-                    md = orifice_mass_flow(Ae_eff, self.params.exhaust_valve.discharge_coefficient,
+                    md = orifice_mass_flow(Ae_eff, 1.0,
                                            self.boundaries.exhaust_pressure_pa, self.boundaries.exhaust_temperature_k,
                                            p, GAMMA)
                     m_dot_in += md
