@@ -100,6 +100,18 @@
         <span class="pill">Pure JavaScript • Mobile-friendly</span>
       </div>
     </section>
+
+    <section class="card viz">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <h2 style="margin:0;font-size:16px">Engine Animation</h2>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button id="playBtn">▶︎ Play</button>
+          <span class="pill mono">Angle: <span id="angleOut">0</span>°</span>
+        </div>
+      </div>
+      <svg id="engine" viewBox="0 0 600 360" role="img" aria-label="Engine animation"></svg>
+      <small class="mono" style="color:#8f97c6">Schematic: piston and valves motion; blue = intake air-fuel, orange = combustion, gray = exhaust.</small>
+    </section>
   </div>
 
   <script>
@@ -340,9 +352,194 @@
       drawCurve(result.theta, result.pbar);
       imepOut.textContent = result.imepBar.toFixed(1);
       workOut.textContent = result.work.toFixed(2);
+      updateAnimDataFrom(result); // Update animation data
     }
 
     document.getElementById('runBtn').addEventListener('click', runSim);
+  </script>
+
+  <script>
+    // Engine animation (schematic)
+    const engineSVG = document.getElementById('engine');
+    const angleOut = document.getElementById('angleOut');
+    const playBtn = document.getElementById('playBtn');
+
+    const anim = { playing:false, lastT:0, idx:0, theta:[], pbar:[], ivo:0, ivc:0, evo:0, evc:0 };
+
+    function setupEngineScene(){
+      while (engineSVG.firstChild) engineSVG.removeChild(engineSVG.firstChild);
+      const W=600,H=360; const pad=20; const cylW=220, cylH=220;
+      const cylX= (W-cylW)/2, cylY=60;
+
+      // Cylinder outline
+      const cyl = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      cyl.setAttribute('x', cylX); cyl.setAttribute('y', cylY);
+      cyl.setAttribute('width', cylW); cyl.setAttribute('height', cylH);
+      cyl.setAttribute('fill', '#0c1024'); cyl.setAttribute('stroke', '#2a2f4a');
+      engineSVG.appendChild(cyl);
+
+      // Intake port (left top)
+      const intPort = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      intPort.setAttribute('x', cylX-70); intPort.setAttribute('y', cylY+10);
+      intPort.setAttribute('width', 70); intPort.setAttribute('height', 24);
+      intPort.setAttribute('fill', '#0c1024'); intPort.setAttribute('stroke', '#2a2f4a');
+      engineSVG.appendChild(intPort);
+
+      // Exhaust port (right top)
+      const exhPort = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      exhPort.setAttribute('x', cylX+cylW); exhPort.setAttribute('y', cylY+10);
+      exhPort.setAttribute('width', 70); exhPort.setAttribute('height', 24);
+      exhPort.setAttribute('fill', '#0c1024'); exhPort.setAttribute('stroke', '#2a2f4a');
+      engineSVG.appendChild(exhPort);
+
+      // Valves
+      const intValve = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      intValve.setAttribute('cx', cylX-10); intValve.setAttribute('cy', cylY+22);
+      intValve.setAttribute('r', 10); intValve.setAttribute('fill', '#5ee1a9');
+      intValve.setAttribute('id','intValve'); engineSVG.appendChild(intValve);
+
+      const exhValve = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      exhValve.setAttribute('cx', cylX+cylW+10); exhValve.setAttribute('cy', cylY+22);
+      exhValve.setAttribute('r', 10); exhValve.setAttribute('fill', '#ff6e7f');
+      exhValve.setAttribute('id','exhValve'); engineSVG.appendChild(exhValve);
+
+      // Piston
+      const piston = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      piston.setAttribute('x', cylX+6); piston.setAttribute('y', cylY+cylH-40);
+      piston.setAttribute('width', cylW-12); piston.setAttribute('height', 36);
+      piston.setAttribute('rx', 6); piston.setAttribute('fill', '#1a2042'); piston.setAttribute('stroke','#2a2f4a');
+      piston.setAttribute('id','piston'); engineSVG.appendChild(piston);
+
+      // Combustion glow layer
+      const glow = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      glow.setAttribute('x', cylX+2); glow.setAttribute('y', cylY+2);
+      glow.setAttribute('width', cylW-4); glow.setAttribute('height', cylH-4);
+      glow.setAttribute('fill', '#ffb86b'); glow.setAttribute('opacity','0'); glow.setAttribute('id','glow');
+      engineSVG.appendChild(glow);
+
+      // Particle groups
+      const gInt = document.createElementNS('http://www.w3.org/2000/svg','g'); gInt.setAttribute('id','gInt'); engineSVG.appendChild(gInt);
+      const gExh = document.createElementNS('http://www.w3.org/2000/svg','g'); gExh.setAttribute('id','gExh'); engineSVG.appendChild(gExh);
+    }
+
+    // Particle system
+    const particles = { intake:[], exhaust:[] };
+
+    function spawnParticle(kind){
+      const W=600,H=360; const cylW=220, cylH=220; const cylX=(W-cylW)/2, cylY=60;
+      const circle = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      let x,y,vx,vy,color,r;
+      if (kind==='intake'){
+        x = cylX-35; y = cylY+22; vx = 1.5+Math.random(); vy = 0.5-Math.random(); color = '#5ee1a9'; r=3;
+        circle.setAttribute('fill', color); circle.setAttribute('r', r);
+        document.getElementById('gInt').appendChild(circle);
+        particles.intake.push({el:circle, x,y,vx,vy,life:1.8});
+      }else{
+        x = cylX+cylW+35; y = cylY+22; vx = -1.8-Math.random(); vy = 0.5-Math.random(); color = '#9aa0aa'; r=3;
+        circle.setAttribute('fill', color); circle.setAttribute('r', r);
+        document.getElementById('gExh').appendChild(circle);
+        particles.exhaust.push({el:circle, x,y,vx,vy,life:1.6});
+      }
+    }
+
+    function stepParticles(dt){
+      const adv = (list)=>{
+        for (let i=list.length-1;i>=0;i--){
+          const p = list[i];
+          p.x += p.vx* (60*dt/1000);
+          p.y += p.vy* (60*dt/1000);
+          p.life -= dt/1000;
+          if (p.life<=0){
+            p.el.remove(); list.splice(i,1);
+          }else{
+            p.el.setAttribute('cx', p.x.toFixed(1));
+            p.el.setAttribute('cy', p.y.toFixed(1));
+            p.el.setAttribute('opacity', Math.max(0, p.life/1.8).toFixed(2));
+          }
+        }
+      };
+      adv(particles.intake); adv(particles.exhaust);
+    }
+
+    // Helpers to compute kinematics for animation
+    function pistonYAtTheta(theta){
+      const bore=0.086, stroke=0.086, rod=0.143; const area=Math.PI*(bore*bore)/4; const r=stroke/2, l=rod;
+      const t = theta*DEG_TO_RAD; const term = Math.max(0, l*l - (r*Math.sin(t))**2);
+      const x = r*Math.cos(t) + Math.sqrt(term); const x_tdc = r + l; const s = x_tdc - x; // [m]
+      // Map to pixel Y inside cylinder rectangle
+      const W=600,H=360; const cylW=220,cylH=220; const cylX=(W-cylW)/2, cylY=60; const maxStrokePx = cylH-40;
+      const s_norm = Math.min(1, Math.max(0, s / stroke));
+      return cylY + (s_norm * maxStrokePx);
+    }
+
+    function valveOffset(lift_m){
+      // map lift in meters to visual pixel offset (scale mm to ~12px at 10mm)
+      const lift_mm = lift_m*1000; return (lift_mm/10)*12;
+    }
+
+    function animateLoop(t){
+      if (!anim.playing){ anim.lastT=0; return; }
+      if (!anim.lastT) anim.lastT = t;
+      const dt = t - anim.lastT; anim.lastT = t;
+
+      // Advance index based on RPM and sampling density
+      const degPerMs = (+rpm.value) * 720 / 60000;
+      const dtheta = 2; // assume sampling every 2 deg for animation pacing
+      const msPerStep = dtheta / Math.max(1e-6, degPerMs);
+      if (dt >= msPerStep){
+        anim.idx = (anim.idx + 1) % anim.theta.length;
+      }
+
+      const theta = anim.theta[anim.idx];
+      angleOut.textContent = theta.toFixed(0);
+
+      // Update piston position
+      const y = pistonYAtTheta(theta);
+      const piston = document.getElementById('piston');
+      piston.setAttribute('y', (y-36).toFixed(1));
+
+      // Update valves
+      const intakeValve = makeValve(+ivo.value, +ivc.value, +ilift.value/1000, 0.034, 2, 0.7);
+      const exhaustValve = makeValve(+evo.value, +evc.value, +elift.value/1000, 0.029, 2, 0.7);
+      const intLift = intakeValve.lift(theta);
+      const exhLift = exhaustValve.lift(theta);
+      const intValve = document.getElementById('intValve');
+      const exhValve = document.getElementById('exhValve');
+      const baseY = 60+22; // cylY+22
+      intValve.setAttribute('cy', (baseY + valveOffset(intLift)).toFixed(1));
+      exhValve.setAttribute('cy', (baseY + valveOffset(exhLift)).toFixed(1));
+
+      // Combustion glow using Wiebe derivative
+      const wiebe = { startDeg:355, durationDeg:40, a:6, m:2, dxb(theta){ if (theta<355||theta>395) return 0; const x=(theta-355)/40; return this.a*(this.m+1)/40 * Math.pow(x,this.m)* Math.exp(-this.a*Math.pow(x,this.m+1)); } };
+      const thetaMod = ((theta%720)+720)%720;
+      const glow = document.getElementById('glow');
+      const combi = wiebe.dxb(thetaMod);
+      glow.setAttribute('opacity', Math.min(0.6, combi*8).toFixed(2));
+
+      // Spawn intake/exhaust particles when flows are plausible
+      const p_bar = anim.pbar[anim.idx];
+      const p = p_bar*1e5; const p_intake=1e5, p_exh=1.1e5;
+      if (intLift>1e-4 && p_intake>=p && Math.random()<0.7) spawnParticle('intake');
+      if (exhLift>1e-4 && p>=p_exh && Math.random()<0.7) spawnParticle('exhaust');
+      stepParticles(dt);
+
+      requestAnimationFrame(animateLoop);
+    }
+
+    playBtn.addEventListener('click', ()=>{
+      if (!anim.theta.length){
+        // Require a simulation first
+        runSim();
+      }
+      anim.playing = !anim.playing;
+      playBtn.textContent = anim.playing ? '❚❚ Pause' : '▶︎ Play';
+      if (anim.playing){ anim.idx=0; anim.lastT=0; requestAnimationFrame(animateLoop); }
+    });
+
+    function updateAnimDataFrom(result){
+      anim.theta = result.theta; anim.pbar = result.pbar;
+      setupEngineScene(); angleOut.textContent = '0';
+    }
   </script>
 </body>
 </html>
